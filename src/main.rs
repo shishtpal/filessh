@@ -1,7 +1,10 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use crate::par_dir_traversal::{WalkParallel, WalkState};
 use crate::ssh::Session;
 use crate::{cli::Cli, files::FileEntry};
+use async_lock::Mutex as AsyncMutex;
 use clap::Parser;
 use color_eyre::eyre::{self, Result};
 use russh_sftp::client::SftpSession;
@@ -11,7 +14,8 @@ use tracing::info;
 mod cli;
 mod files;
 mod logging;
-// mod par_dir_traversal;
+mod par_dir_traversal;
+mod patched_line_gauge;
 mod ssh;
 mod tui;
 
@@ -28,7 +32,7 @@ fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let sftp = rt.block_on(async {
+    let (session, sftp) = rt.block_on(async {
         let cli = cli.clone();
         let mut ssh = Session::connect(
             cli.private_key,
@@ -39,9 +43,12 @@ fn main() -> Result<()> {
         .await?;
         info!("Connected");
         let sftp = ssh.sftp().await?;
-        eyre::Ok(sftp)
+        sftp.set_timeout(60000).await;
+        eyre::Ok((ssh, sftp))
     })?;
     let sftp = Arc::new(sftp);
-    crate::tui::tui(cli.path.display().to_string(), cli, rt, sftp)?;
-    Ok(())
+    let session = Arc::new(AsyncMutex::new(session));
+    //  Run the parallel walker with a visitor closure
+    crate::tui::tui(cli.path.display().to_string(), cli, rt, sftp, session)?;
+    eyre::Ok(())
 }

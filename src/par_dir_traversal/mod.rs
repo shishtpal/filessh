@@ -1,6 +1,10 @@
 use color_eyre::eyre::Result;
 use crossbeam::deque::{Stealer, Worker as Deque};
-use russh_sftp::client::SftpSession;
+use futures::future::join_all; // add at top of file if not present
+use russh_sftp::{
+    client::{SftpSession, fs::Metadata},
+    protocol::FileType,
+};
 use std::{
     mem,
     path::PathBuf,
@@ -9,6 +13,8 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
+use tokio::task::JoinHandle;
+use tracing::info;
 
 use crate::files::FileEntry;
 
@@ -33,8 +39,7 @@ struct FnBuilder<F> {
     builder: F,
 }
 
-pub trait ParallelVisitorBuilder<'s> {
-    /// Create per-thread `ParallelVisitor`s for `WalkParallel`.
+pub trait ParallelVisitorBuilder<'s>: Send {
     fn build(&mut self) -> Box<dyn ParallelVisitor + 's>;
 }
 
@@ -44,7 +49,7 @@ impl<'s, P: ParallelVisitorBuilder<'s>> ParallelVisitorBuilder<'s> for &mut P {
     }
 }
 
-impl<'s, F: FnMut() -> FnVisitor<'s>> ParallelVisitorBuilder<'s> for FnBuilder<F> {
+impl<'s, F: FnMut() -> FnVisitor<'s> + Send> ParallelVisitorBuilder<'s> for FnBuilder<F> {
     fn build(&mut self) -> Box<dyn ParallelVisitor + 's> {
         let visitor = (self.builder)();
         Box::new(FnVisitorImp { visitor })
@@ -67,24 +72,62 @@ impl<'s> ParallelVisitor for FnVisitorImp<'s> {
 }
 
 impl WalkParallel {
-    pub async fn run<'s, F>(self, mkf: F)
+    pub async fn run<F>(self, mkf: F)
     where
-        F: FnMut() -> FnVisitor<'s>,
+        F: FnMut() -> FnVisitor<'static> + Send,
     {
         self.visit(&mut FnBuilder { builder: mkf }).await
     }
 
-    pub async fn visit(mut self, builder: &mut dyn ParallelVisitorBuilder<'_>) {
+    pub async fn visit(mut self, builder: &mut dyn ParallelVisitorBuilder<'static>) {
         let threads = self.threads();
-        let mut stack = vec![];
-        let path = self.path.clone();
-        let dirent = self.sftp.open(path.display().to_string()).await;
-        let mut visitor = builder.build();
-        if let Err(err) = dirent {
-            visitor.visit(Err(err.into()));
-            return;
+
+        // --- Create the root work item ------------------------------------
+        let root_path = self.path.display().to_string();
+
+        // Build a synthetic root FileEntry (a directory)
+        let attr = Metadata::empty();
+        let root_entry = FileEntry::from_file(root_path.clone(), FileType::Dir, attr);
+
+        // The traversal starts at the root path (cwd = root_path)
+        let init: Vec<Message> = vec![Message::Work(Work {
+            entry: root_entry,
+            cwd: root_path.clone(),
+        })];
+
+        // --- Create per-thread work-stealing stacks -----------------------
+        let stacks = Stack::new_for_each_thread(threads, init);
+
+        // --- Shared state -------------------------------------------------
+        let quit_now = Arc::new(AtomicBool::new(false));
+        let active_workers = Arc::new(AtomicUsize::new(threads));
+
+        // --- Build all visitors *before* spawning -------------------------
+        let visitors: Vec<Box<dyn ParallelVisitor + 'static>> =
+            (0..threads).map(|_| builder.build()).collect();
+
+        // --- Spawn workers ------------------------------------------------
+        let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(threads);
+
+        for (stack, visitor) in stacks.into_iter().zip(visitors.into_iter()) {
+            let worker = Woker {
+                visitor,
+                stack,
+                quit_now: Arc::clone(&quit_now),
+                active_workers: Arc::clone(&active_workers),
+                max_depth: self.max_depth,
+                filter: Some(self.filter.clone()),
+                sftp: Arc::clone(&self.sftp),
+            };
+
+            // Each worker runs concurrently; owns its visitor and stack
+            handles.push(tokio::spawn(async move {
+                worker.run().await;
+            }));
         }
-        stack.push(Work { entry: dirent });
+
+        // --- Wait for all workers to finish -------------------------------
+        let _ = join_all(handles).await;
     }
 
     fn threads(&self) -> usize {
@@ -109,22 +152,37 @@ enum Message {
 
 pub struct Work {
     entry: FileEntry,
+    cwd: String, // full remote path to the *entry*
 }
 
 impl Work {
-    pub fn is_dir(&self) -> bool {
-        self.entry.is_dir()
-    }
-    pub async fn read_dir(&self, sftp: Arc<SftpSession>) -> Result<Vec<FileEntry>> {
-        if self.is_dir() {
-            let dirs = sftp
-                .read_dir(self.entry.name())
-                .await?
-                .map(FileEntry::from)
-                .collect::<Vec<_>>();
-            return Ok(dirs);
-        }
-        Ok(vec![])
+    pub async fn read_dir(&self, sftp: Arc<SftpSession>) -> Result<Vec<Work>> {
+        // Determine the directory path we should read.
+        // For the root, `cwd` is already the directory path.
+        let dir_path = if self.entry.is_dir() {
+            if self.cwd.ends_with(self.entry.name()) {
+                // If cwd already ends with the entry name, use it as-is
+                self.cwd.clone()
+            } else {
+                // Otherwise, join cwd + entry name
+                format!("{}/{}", self.cwd, self.entry.name())
+            }
+        } else {
+            // Not a directory, nothing to read
+            return Ok(vec![]);
+        };
+
+        // Read entries via SFTP
+        let entries = sftp.read_dir(dir_path.clone()).await?;
+
+        let works = entries
+            .map(|child| Work {
+                entry: FileEntry::from(child),
+                cwd: dir_path.clone(), // new base for children
+            })
+            .collect::<Vec<_>>();
+
+        Ok(works)
     }
 }
 
@@ -230,35 +288,50 @@ impl<'a> Woker<'a> {
     pub async fn run_one(&mut self, work: Work) -> WalkState {
         let sftp = Arc::clone(&self.sftp);
         let readdir = work.read_dir(sftp).await;
-        let state = self.visitor.visit(Ok(work.entry));
+
+        // --- Create a new FileEntry with an absolute name -----------------
+        let abs_entry = {
+            let path = if work.cwd.ends_with(work.entry.name()) {
+                work.cwd.clone()
+            } else {
+                PathBuf::from(&work.cwd)
+                    .join(work.entry.name())
+                    .to_string_lossy()
+                    .to_string()
+            };
+
+            // Rebuild FileEntry, preserving its metadata but using abs path as the name
+            FileEntry::from_file(path, FileType::Dir, work.entry.attributes.clone())
+        };
+
+        // Visit the current file/directory with absolute name
+        let state = self.visitor.visit(Ok(abs_entry));
         if !state.is_continue() {
             return state;
         }
+
+        // --- Process directory contents -----------------------------------
         let readdir = match readdir {
             Ok(readdir) => readdir,
-            Err(err) => {
-                return self.visitor.visit(Err(err));
-            }
+            Err(err) => return self.visitor.visit(Err(err)),
         };
-        for result in readdir {
-            let state = self.generate_work(Ok(result)).await;
+
+        for child_work in readdir {
+            let state = self.generate_work(child_work).await;
             if state.is_quit() {
                 return state;
             }
         }
+
         WalkState::Continue
     }
 
-    pub async fn generate_work(&mut self, result: Result<FileEntry>) -> WalkState {
-        let result = match result {
-            Ok(result) => result,
-            Err(err) => {
-                return self.visitor.visit(Err(err));
-            }
-        };
-        self.send(Work { entry: result });
+    pub async fn generate_work(&mut self, work: Work) -> WalkState {
+        // Push this new work onto the queue
+        self.send(work);
         WalkState::Continue
     }
+
     fn get_work(&mut self) -> Option<Work> {
         let mut value = self.recv();
         loop {

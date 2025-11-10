@@ -1,8 +1,10 @@
+use self::main_ui::MainUI;
 use crate::cli::Cli;
 use crate::files::FileEntry;
-
-use self::main_ui::MainUI;
+use crate::ssh::Session;
+use async_lock::Mutex;
 use color_eyre::Report as Error;
+use rat_focus::Focus;
 use rat_salsa::event::RenderedEvent;
 use rat_salsa::poll::{PollCrossterm, PollRendered, PollTasks, PollTimers};
 use rat_salsa::timer::TimeOut;
@@ -22,17 +24,19 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use tracing::error;
 
 pub fn tui(
     current_path: String,
     cli: Cli,
     rt: tokio::runtime::Runtime,
     sftp: Arc<SftpSession>,
+    session: Arc<Mutex<Session>>,
 ) -> Result<(), Error> {
     let config = Config::new(cli);
     let theme = create_theme("Imperial Dark").expect("theme");
     let mut global = Global::new(config, theme);
-    let mut state = Scenery::new(current_path, sftp);
+    let mut state = Scenery::new(current_path, sftp, session);
 
     run_tui(
         init, //
@@ -98,9 +102,14 @@ pub enum AppEvent {
     Timer(TimeOut),
     Event(crossterm::event::Event),
     ChangeDir(String),
+    DownloadStart,
+    DownloadEnd,
     UpdateCurrentPath(String),
+    Throb,
+    Gauge(f64),
+    SetTotalFilesToDownload(usize),
     UpdateFiles(Vec<FileEntry>),
-    DownloadFile(String, PathBuf),
+    DownloadFile(String, PathBuf, Option<String>),
     DownloadFolder(String, PathBuf),
     Rendered,
     Message(String),
@@ -135,9 +144,9 @@ pub struct Scenery {
 }
 
 impl Scenery {
-    pub fn new(current_path: String, sftp: Arc<SftpSession>) -> Self {
+    pub fn new(current_path: String, sftp: Arc<SftpSession>, session: Arc<Mutex<Session>>) -> Self {
         Self {
-            async1: MainUI::new(current_path, sftp),
+            async1: MainUI::new(current_path, sftp, session),
             status: StatusLineState::default(),
             error_dlg: MsgDialogState::default(),
         }
@@ -260,6 +269,9 @@ pub fn error(
     state: &mut Scenery,
     _ctx: &mut Global,
 ) -> Result<Control<AppEvent>, Error> {
+    error!("{:?}", &*event);
+    //let r: Result<(), Error> = Err(event);
+    //r.unwrap();
     state.error_dlg.append(format!("{:?}", &*event).as_str());
     Ok(Control::Changed)
 }
@@ -267,12 +279,16 @@ pub fn error(
 pub mod main_ui {
     use crate::files::FileDataSlice;
     use crate::files::FileEntry;
+    use crate::par_dir_traversal::WalkParallel;
+    use crate::par_dir_traversal::WalkState;
+    use crate::patched_line_gauge::LineGauge;
     use crate::ssh::Session;
 
     use super::AppEvent;
     use super::Global;
     use ::futures::executor::block_on;
     use color_eyre::Report as Error;
+    use color_eyre::eyre;
     use color_eyre::eyre::Result;
     use rat_focus::impl_has_focus;
     use rat_focus::match_focus;
@@ -281,12 +297,14 @@ pub mod main_ui {
     use rat_ftable::event::ct_event;
     use rat_ftable::event::try_flow;
     //use rat_ftable::event::try_flow;
+    use async_lock::Mutex as AsyncMutex;
     use rat_ftable::selection::RowSelection;
     use rat_ftable::selection::rowselection;
     use rat_ftable::textdata::Cell;
+    use rat_salsa::tasks::Cancel;
     use rat_salsa::{Control, SalsaContext};
-    use rat_widget::event::{HandleEvent, MenuOutcome, Regular};
-    use rat_widget::menu::{MenuLine, MenuLineState};
+    use rat_widget::event::TextOutcome;
+    use rat_widget::event::{HandleEvent, Regular};
     use rat_widget::paragraph::Paragraph;
     use rat_widget::paragraph::ParagraphState;
     use rat_widget::scrolled::Scroll;
@@ -297,10 +315,15 @@ pub mod main_ui {
     use ratatui::layout::Flex;
     use ratatui::layout::Margin;
     use ratatui::layout::{Constraint, Direction, Layout, Rect};
+    use ratatui::style::Color;
+    use ratatui::style::Style;
+    use ratatui::style::Stylize;
+    use ratatui::symbols;
     use ratatui::symbols::line::HORIZONTAL;
     use ratatui::symbols::line::HORIZONTAL_UP;
     use ratatui::symbols::line::ROUNDED_TOP_LEFT;
     use ratatui::text::Line;
+    use ratatui::text::Span;
     use ratatui::widgets::Block;
     use ratatui::widgets::BorderType;
     use ratatui::widgets::Borders;
@@ -309,13 +332,37 @@ pub mod main_ui {
     use ratatui::widgets::Widget;
     use ratatui::widgets::block;
     use russh_sftp::client::SftpSession;
+    use std::f64;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::time::Duration;
+    use throbber_widgets_tui::Throbber;
+    use throbber_widgets_tui::ThrobberState;
     use tokio::io::AsyncReadExt;
     use tokio::io::AsyncWriteExt;
     use tokio::sync::futures;
-    use tracing::info;
+    use tokio::time::sleep;
+    use tracing::debug;
+    use tracing::{error, info};
+    use tui_logger::LevelFilter;
+    use tui_logger::TuiLoggerLevelOutput;
+    use tui_logger::TuiLoggerWidget;
+    use tui_logger::TuiWidgetState;
+
+    const CHARSET: symbols::line::Set = symbols::line::Set {
+        top_left: "#",
+        top_right: "#",
+        bottom_left: "#",
+        bottom_right: "#",
+        horizontal: "#",
+        vertical: "│",
+        vertical_left: "│",
+        vertical_right: "│",
+        cross: "┼",
+        horizontal_up: "┴",
+        horizontal_down: "┬",
+    };
 
     pub struct MainUI {
         pub current_path: String,
@@ -324,6 +371,14 @@ pub mod main_ui {
         pub input_state: TextInputState,
         pub input_mode: InputMode,
         pub sftp: Arc<SftpSession>,
+        pub session: Arc<AsyncMutex<Session>>,
+        pub log_state: TuiWidgetState,
+        pub throbber: ThrobberState,
+        pub is_downloading: bool,
+        pub filtered_file_entries: Vec<FileEntry>,
+        pub total_files_to_download: usize,
+        pub downloaded_files: usize,
+        pub download_progress: f64,
     }
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
     pub enum InputMode {
@@ -333,7 +388,11 @@ pub mod main_ui {
     }
 
     impl MainUI {
-        pub fn new(current_path: String, sftp: Arc<SftpSession>) -> Self {
+        pub fn new(
+            current_path: String,
+            sftp: Arc<SftpSession>,
+            session: Arc<AsyncMutex<Session>>,
+        ) -> Self {
             Self {
                 current_path,
                 table_state: TableState::default(),
@@ -341,6 +400,25 @@ pub mod main_ui {
                 input_state: TextInputState::default(),
                 input_mode: InputMode::default(),
                 sftp,
+                log_state: TuiWidgetState::new()
+                    .set_default_display_level(LevelFilter::Off)
+                    .set_level_for_target("App", LevelFilter::Debug)
+                    .set_level_for_target("background-task", LevelFilter::Info),
+                throbber: ThrobberState::default(),
+                is_downloading: false,
+                download_progress: 0.0,
+                filtered_file_entries: Vec::new(),
+                session,
+                total_files_to_download: 0,
+                downloaded_files: 0,
+            }
+        }
+
+        pub fn get_file_entries(&self) -> &Vec<FileEntry> {
+            if self.filtered_file_entries.is_empty() {
+                &self.current_file_entries
+            } else {
+                &self.filtered_file_entries
             }
         }
     }
@@ -399,8 +477,69 @@ pub mod main_ui {
             unreachable!()
         };
 
+        let &[rb_top, rb_bottom] = Layout::new(
+            Direction::Vertical,
+            [Constraint::Fill(1), Constraint::Length(3)],
+        )
+        .split(right_bottom)
+        .as_ref() else {
+            unreachable!()
+        };
+        let log_widget = TuiLoggerWidget::default()
+            .style_error(Style::default().fg(Color::Red))
+            .style_debug(Style::default().fg(Color::Cyan))
+            .style_warn(Style::default().fg(Color::Yellow))
+            .style_trace(Style::default().fg(Color::Magenta))
+            .style_info(Style::default().fg(Color::Green))
+            .output_separator(':')
+            .output_timestamp(Some("%H:%M:%S".to_string()))
+            .output_level(Some(TuiLoggerLevelOutput::Long))
+            .output_target(false)
+            .output_file(false)
+            .output_line(false)
+            .state(&state.log_state)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title_top(Line::raw("Log")),
+            );
+        log_widget.render(rb_top, buf);
+
+        let gauge_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded);
+        if state.is_downloading {
+            let gauge = LineGauge::default()
+                .filled_style(Style::default().fg(Color::Black).on_green())
+                .unfilled_style(ctx.theme.container_base())
+                .block(gauge_block.padding(Padding::horizontal(1)))
+                .ratio(state.download_progress)
+                .label(format!(
+                    "Downloaded {:.0}/{}  ",
+                    state.downloaded_files, state.total_files_to_download
+                ))
+                .line_set(CHARSET);
+            gauge.render(rb_bottom, buf);
+        } else {
+            let hints = [
+                keybind("Tab", "Focus  "),
+                keybind("h/j/k/l", "Naviagte Table  "),
+                keybind("d", "Download  "),
+                keybind("f", "Filter  "),
+            ]
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+            Paragraph::new(vec![Line::from(hints)])
+                .alignment(ratatui::layout::Alignment::Center)
+                .block(gauge_block.title("Keybinds"))
+                .render(rb_bottom, buf, &mut ParagraphState::default());
+        }
+
         if let Some(row) = state.table_state.selected() {
-            let file = state.current_file_entries.get(row);
+            let file = state.get_file_entries().get(row);
             if let Some(file) = file {
                 let paragraph = Paragraph::from(file.clone())
                     .block(
@@ -419,8 +558,13 @@ pub mod main_ui {
                 .render(right_top, buf);
         }
         let input_block_title = match state.input_mode {
-            InputMode::Filter => "Filter",
-            InputMode::DownloadPath => "Download Path",
+            InputMode::Filter => "Filter".to_string(),
+            InputMode::DownloadPath => {
+                let current_item = state.table_state.selected_checked().unwrap_or_default();
+                let file = state.get_file_entries()[current_item].clone();
+
+                format!("Download [{}/{}] to Path", state.current_path, file.name())
+            }
         };
         let input = TextInput::new().style(ctx.theme.container_base()).block(
             Block::bordered()
@@ -428,9 +572,11 @@ pub mod main_ui {
                 .border_type(BorderType::Rounded)
                 .border_style(match_focus!(state.input_state => ctx.theme.container_border().fg(ratatui::style::Color::Yellow), else => ctx.theme.container_border()))
                 .title_top(input_block_title)
-                .padding(Padding::horizontal(2)),
+                .padding(Padding::horizontal(1)),
         );
         input.render(left_bottom, buf, &mut state.input_state);
+
+        let data = FileDataSlice(&state.get_file_entries().clone());
 
         let table_style = ctx.theme.table_style();
         let table = Table::<RowSelection>::default()
@@ -439,7 +585,7 @@ pub mod main_ui {
                     .border_type(block::BorderType::Rounded)
                     .border_style(ctx.theme.container_border()),
             )
-            .data(FileDataSlice(&state.current_file_entries))
+            .data(data)
             .widths([
                 Constraint::Length(12),
                 Constraint::Length(40),
@@ -484,17 +630,12 @@ pub mod main_ui {
             let files = sftp.read_dir(path.clone()).await?;
             let files = files.into_iter().map(FileEntry::from).collect::<Vec<_>>();
             let full_path = sftp.canonicalize(path).await?;
-            sftp.close().await?;
-            ssh.close().await?;
             chan.send(Ok(Control::Event(AppEvent::UpdateCurrentPath(full_path))))
                 .await?;
             chan.send(Ok(Control::Event(AppEvent::UpdateFiles(files))))
                 .await?;
             Ok(Control::Event(AppEvent::AsyncTick(300)))
         });
-        // let files = block_on(state.sftp.read_dir(&state.current_path))?;
-        // let files = files.into_iter().map(FileEntry::from).collect::<Vec<_>>();
-        // state.current_file_entries = files;
 
         ctx.focus().first();
         Ok(())
@@ -507,7 +648,21 @@ pub mod main_ui {
     ) -> Result<Control<AppEvent>, Error> {
         let r = match event {
             AppEvent::Event(event) => {
-                try_flow!(state.input_state.handle(event, Regular));
+                try_flow!(match state.input_state.handle(event, Regular) {
+                    TextOutcome::TextChanged => {
+                        if state.input_mode == InputMode::Filter {
+                            let filter: String = state.input_state.value();
+                            state.filtered_file_entries = state
+                                .current_file_entries
+                                .iter()
+                                .filter(|file| file.name().contains(&filter))
+                                .cloned()
+                                .collect();
+                        }
+                        Control::Changed
+                    }
+                    v => v.into(),
+                });
                 try_flow!(match_focus!(
                     state.table_state => {
                     try_flow!(
@@ -533,7 +688,7 @@ pub mod main_ui {
                                 if let Some(parent) = parent {
                                     let parent = parent.display();
                                     state.current_path = parent.to_string();
-
+                                    state.filtered_file_entries.clear();
                                     Control::Event(AppEvent::ChangeDir(parent.to_string()))
                                 } else {
                                     Control::Continue
@@ -544,12 +699,13 @@ pub mod main_ui {
                                 let path = PathBuf::from(state.current_path.clone());
                                 let selected = state.table_state.selected();
                                 if let Some(selected) = selected {
-                                    let Some(file) = state.current_file_entries.get(selected) else {
+                                    let Some(file) = state.get_file_entries().get(selected) else {
                                         return Ok(Control::Continue);
                                     };
                                     if file.is_dir() {
                                         let path = path.join(file.name());
                                         state.current_path = path.display().to_string();
+                                        state.filtered_file_entries.clear();
                                         return Ok(Control::Event(AppEvent::ChangeDir(path.display().to_string())));
                                     }
                                 }
@@ -561,6 +717,11 @@ pub mod main_ui {
 
                                 Control::Changed
                             }
+                            ct_event!(key press 'f') => {
+                                state.input_mode = InputMode::Filter;
+                                ctx.focus().focus(&state.input_state);
+                                Control::Changed
+                            }
                             _ => Control::Continue
                         }
                     },
@@ -569,22 +730,24 @@ pub mod main_ui {
                             match event {
                                 ct_event!(keycode press Enter) => {
                                     let path:String = state.input_state.value();
-                                    let path = PathBuf::from(path);
+                                    let path = PathBuf::from(path).canonicalize()?;
                                     let selected = state.table_state.selected();
                                     if let Some(selected) = selected {
-                                        let Some(file) = state.current_file_entries.get(selected) else {
+                                        let Some(file) = state.get_file_entries().get(selected) else {
                                             return Ok(Control::Continue);
                                         };
+                                        let path = path.join(file.name());
                                         let name = state.current_path.clone() + "/" + file.name();
                                         if file.is_dir() {
                                             return Ok(Control::Event(AppEvent::DownloadFolder(name, path)));
                                         }
-                                        return Ok(Control::Event(AppEvent::DownloadFile(name, path)));
+                                        return Ok(Control::Event(AppEvent::DownloadFile(name, path, Some(file.name().clone()))));
                                     }
                                 }
                                 _ => {}
                             }
                         }
+
                         Control::Continue
                     },
 
@@ -596,15 +759,46 @@ pub mod main_ui {
                 // receive result from async operation
                 Control::Event(AppEvent::Message(s.clone()))
             }
-            AppEvent::DownloadFile(name, path) => {
-                let sftp = Arc::clone(&state.sftp);
+            AppEvent::Throb => {
+                debug!("Throbber");
+                state.throbber.calc_next();
+                Control::Changed
+            }
+            AppEvent::DownloadStart => {
+                state.is_downloading = true;
+                Control::Changed
+            }
+            AppEvent::DownloadEnd => {
+                state.is_downloading = false;
+                Control::Changed
+            }
+            AppEvent::Gauge(progress) => {
+                state.download_progress = *progress;
+                state.downloaded_files += 1;
+                Control::Changed
+            }
+            AppEvent::DownloadFile(name, path, filename) => {
+                state.throbber.calc_next();
+                info!(name, path = ?path.display(), filename = ?filename.clone(), "File Details");
+                let session = Arc::clone(&state.session);
                 let path = path.clone();
                 let name = name.clone();
+
+                info!(name, path = ?path.display(), "File Details");
                 ctx.spawn_async_ext(|chan| async move {
+                    let sftp = {
+                        let mut session = session.lock().await;
+                        session.sftp().await?
+                    };
                     let mut remote_file = sftp.open(name.clone()).await?;
                     let mut buf = Vec::new();
                     remote_file.read_to_end(&mut buf).await?;
-                    let mut file = tokio::fs::File::create(path.join(name)).await?;
+                    info!(len = ?buf.len(), "Read file");
+                    if let Some(parent) = path.parent() {
+                        tokio::fs::create_dir_all(parent).await?;
+                    }
+                    info!(path = ?path.display(),"Writing file to" );
+                    let mut file = tokio::fs::File::create(path).await?;
                     let _ = file.write(&buf).await?;
                     file.flush().await?;
                     file.sync_all().await?;
@@ -613,15 +807,85 @@ pub mod main_ui {
                 Control::Continue
             }
             AppEvent::DownloadFolder(file, path) => {
-                let sftp = Arc::clone(&state.sftp);
-                let path = path.clone();
+                ctx.queue_event(AppEvent::DownloadStart);
+
+                info!("Downloading folder {}", file);
+
+                let session = Arc::clone(&state.session);
+                let dirname = file.split('/').next_back().unwrap_or("");
+                std::fs::create_dir_all(path.clone())?;
+                info!(path =?path.display(), dirname, "Path and dirname");
+                let path = path.clone().canonicalize()?;
+                //.join(dirname);
+
                 let file = file.clone();
-                ctx.spawn_async_ext(|_| async move {
-                    let read_dir = sftp.read_dir(file.clone()).await?;
-                    let files = read_dir
-                        .into_iter()
-                        .map(FileEntry::from)
-                        .collect::<Vec<_>>();
+                ctx.spawn_async_ext(|chan| async move {
+                    let sftp = {
+                        let mut session = session.lock().await;
+                        session.sftp().await?
+                    };
+                    let walker = WalkParallel {
+                        filter: Arc::new(|_| true),
+                        path: file.clone().into(),
+                        max_depth: Some(3),
+                        min_depth: None,
+                        threads: 4,
+                        sftp: sftp.into(),
+                    };
+                    let collected = Arc::new(Mutex::new(Vec::<FileEntry>::new()));
+                    let collected_ref = Arc::clone(&collected);
+                    walker
+                        .run(|| {
+                            // This closure is called once per worker thread.
+                            let collected = collected_ref.clone();
+                            Box::new(move |entry_res: Result<FileEntry>| -> WalkState {
+                                match entry_res {
+                                    Ok(entry) => {
+                                        // Push this FileEntry into the shared vector
+                                        info!(entry =?entry.name(), "Visited");
+                                        let mut vec = collected.lock().unwrap();
+                                        vec.push(entry);
+                                    }
+                                    Err(err) => {
+                                        error!("Error visiting entry: {:?}", err);
+                                    }
+                                }
+                                WalkState::Continue
+                            })
+                        })
+                        .await;
+                    let collected_snapshot = {
+                        let lock = collected.lock().unwrap();
+                        lock.clone()
+                    }; // lock dropped here
+
+                    // 2️⃣ Process outside of the lock
+                    let tx = start_sftp_worker(session.clone());
+                    let total = collected_snapshot.len() as f64;
+                    chan.send(Ok(Control::Event(AppEvent::SetTotalFilesToDownload(total as usize)))).await?;
+                    let mut progress = 0.0;
+
+                    for entry in collected_snapshot {
+                        chan.send(Ok(Control::Event(AppEvent::Throb))).await?;
+                        let file = file.clone();
+                        let filename = entry.name().strip_prefix(&file).unwrap_or(entry.name()).replacen("/", "", 1).to_string();
+                        let target_path = path.join(&filename);
+                        info!(file, filename, target_path = ?target_path.display().to_string(), "Downloading");
+
+                        let (reply_tx, reply_rx) = oneshot::channel();
+                        tx.send(SftpCmd::ReadFile {
+                            remote_path: file.clone() + "/" + &filename,
+                            local_path: target_path,
+                            reply: reply_tx,
+                        })?;
+                        let _ = reply_rx.await.unwrap();
+                        progress += 1.0;
+                        chan.send(Ok(Control::Event(AppEvent::Gauge(progress/ total)))).await?;
+
+
+                        sleep(Duration::from_millis(50)).await;
+                    }
+                    chan.send(Ok(Control::Event(AppEvent::DownloadEnd))).await?;
                     Ok(Control::Event(AppEvent::AsyncTick(300)))
                 });
                 Control::Continue
@@ -645,6 +909,10 @@ pub mod main_ui {
                 });
                 Control::Continue
             }
+            AppEvent::SetTotalFilesToDownload(total) => {
+                state.total_files_to_download = *total;
+                Control::Changed
+            }
             AppEvent::UpdateFiles(files) => {
                 state.current_file_entries = files.to_vec();
                 Control::Changed
@@ -657,5 +925,72 @@ pub mod main_ui {
         };
 
         Ok(r)
+    }
+    use tokio::sync::{mpsc, oneshot};
+
+    enum SftpCmd {
+        ReadFile {
+            remote_path: String,
+            local_path: PathBuf,
+            reply: oneshot::Sender<Result<()>>,
+        },
+    }
+
+    fn start_sftp_worker(session: Arc<AsyncMutex<Session>>) -> mpsc::UnboundedSender<SftpCmd> {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let _: Result<()> = rt.block_on(async move {
+                while let Some(cmd) = rx.recv().await {
+                    match cmd {
+                        SftpCmd::ReadFile {
+                            remote_path,
+                            local_path,
+                            reply,
+                        } => {
+                            let result = async {
+                                let mut session = session.lock().await;
+                                info!("Opening remote file {:?}", remote_path);
+                                let sftp = session.sftp().await?;
+                                info!("Got SFTP channel");
+                                let mut remote_file = sftp.open(&remote_path).await;
+                                info!("Opened remote file");
+                                let mut buf = Vec::new();
+                                let read = remote_file
+                                    .as_mut()
+                                    .ok()
+                                    .unwrap()
+                                    .read_to_end(&mut buf)
+                                    .await;
+                                info!("Read result: {:?}", read);
+
+                                let mut file = tokio::fs::File::create(local_path).await?;
+                                file.write_all(&buf).await?;
+                                file.flush().await?;
+                                file.sync_all().await?;
+                                eyre::Ok(())
+                            }
+                            .await;
+                            let _ = reply.send(result);
+                        }
+                    }
+                }
+                eyre::Ok(())
+            });
+            eyre::Ok(())
+        });
+        tx
+    }
+
+    #[inline]
+    fn keybind<'a>(key: &'a str, description: &str) -> Vec<Span<'a>> {
+        vec![
+            Span::styled("<", Style::default().fg(Color::White)),
+            Span::styled(key, Style::default().fg(Color::LightYellow)),
+            Span::styled(
+                format!("> {}", description),
+                Style::default().fg(Color::White),
+            ),
+        ]
     }
 }

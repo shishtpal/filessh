@@ -9,12 +9,13 @@ use std::time::Duration;
 
 use color_eyre::Result;
 use color_eyre::eyre::bail;
+use futures::FutureExt;
 use russh::keys::*;
 use russh::*;
 use russh_sftp::client::SftpSession;
 use tokio::io::AsyncWriteExt;
 use tokio::net::ToSocketAddrs;
-use tracing::info;
+use tracing::{debug, info};
 
 struct Client {}
 
@@ -38,7 +39,7 @@ impl client::Handler for Client {
         data: &[u8],
         _session: &mut client::Session,
     ) -> Result<(), Self::Error> {
-        info!("data on channel {:?}: {}", channel, data.len());
+        debug!("data on channel {:?}: {}", channel, data.len());
         Ok(())
     }
 }
@@ -65,7 +66,7 @@ impl Session {
         }
 
         let config = client::Config {
-            inactivity_timeout: Some(Duration::from_secs(5)),
+            inactivity_timeout: Some(Duration::from_secs(500000)),
             preferred: Preferred {
                 kex: Cow::Owned(vec![
                     russh::kex::CURVE25519_PRE_RFC_8731,

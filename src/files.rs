@@ -108,13 +108,19 @@ impl From<FileEntry> for Paragraph<'_> {
     }
 }
 
-// impl From<File> for FileEntry {
-// fn from(value: File) -> Self {
-// //let name = value.
-// }
-// }
-
 pub struct FileDataSlice<'a>(pub &'a [FileEntry]);
+
+impl FileEntry {
+    pub fn from_file(name: String, type_: FileType, attributes: FileAttributes) -> Self {
+        let name = name.to_string();
+
+        Self {
+            name,
+            type_,
+            attributes,
+        }
+    }
+}
 
 impl<'a> TableData<'a> for FileDataSlice<'a> {
     fn rows(&self) -> usize {
