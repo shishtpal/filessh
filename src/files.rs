@@ -1,5 +1,5 @@
 use derive_getters::Getters;
-use rat_ftable::{TableData, TableDataIter};
+use rat_ftable::TableData;
 use rat_widget::paragraph::Paragraph;
 use ratatui::prelude::Line;
 use ratatui::style::{Modifier, Style, Stylize};

@@ -34,7 +34,7 @@ pub fn tui(
     session: Arc<Mutex<Session>>,
 ) -> Result<(), Error> {
     let config = Config::new(cli);
-    let theme = create_theme("Imperial Dark").expect("theme");
+    let theme = create_theme("Base16 Dark").expect("theme");
     let mut global = Global::new(config, theme);
     let mut state = Scenery::new(current_path, sftp, session);
 
@@ -98,6 +98,7 @@ impl Config {
 
 /// Application wide messages.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum AppEvent {
     Timer(TimeOut),
     Event(crossterm::event::Event),
@@ -191,12 +192,6 @@ pub fn render(
     let el = t0.elapsed().unwrap_or(Duration::from_nanos(0));
     state.status.status(1, format!("R {:.0?}", el).to_string());
 
-    let status_layout = Layout::horizontal([
-        Constraint::Fill(61), //
-        Constraint::Fill(39),
-    ])
-    .split(layout[1]);
-
     StatusLine::new()
         .layout([
             Constraint::Fill(1),
@@ -230,6 +225,12 @@ pub fn event(
                     if let Some(cancel) = state.async1.throbber_cancel.take() {
                         cancel.cancel();
                     }
+                    let session = Arc::clone(&state.async1.session);
+                    ctx.spawn_async_ext(async move |_| {
+                        let mut session = session.lock().await;
+                        session.close().await?;
+                        Ok(Control::Quit)
+                    });
                     Control::Quit
                 }
                 _ => Control::Continue,
@@ -277,8 +278,6 @@ pub fn error(
     _ctx: &mut Global,
 ) -> Result<Control<AppEvent>, Error> {
     error!("{:?}", &*event);
-    let r: Result<()> = Err(event);
-    r.unwrap();
-    //state.error_dlg.append(format!("{:?}", &*event).as_str());
+    state.error_dlg.append(format!("{:?}", &*event).as_str());
     Ok(Control::Changed)
 }

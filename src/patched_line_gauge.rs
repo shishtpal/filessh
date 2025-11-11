@@ -53,6 +53,7 @@ pub struct LineGauge<'a> {
     unfilled_style: Style,
 }
 
+#[allow(dead_code)]
 impl<'a> LineGauge<'a> {
     /// Surrounds the `LineGauge` with a [`Block`].
     #[must_use = "method moves the value of self and returns the modified value"]

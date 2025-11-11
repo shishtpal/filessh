@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Inspired by the Parallel Walker in the
 /// `ignore` crate
 use color_eyre::eyre::Result;
@@ -20,6 +21,7 @@ use crate::files::FileEntry;
 
 pub type Filter = Arc<dyn Fn(&FileEntry) -> bool + Send + Sync + 'static>;
 
+#[allow(dead_code)]
 pub struct WalkParallel {
     pub filter: Filter,
     pub path: PathBuf,

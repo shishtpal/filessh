@@ -193,6 +193,10 @@ pub fn render(
     )
     .split(area);
 
+    if state.detail_window_mode == DetailWindowMode::Details {
+        state.current_file_content = None;
+    }
+
     let current_path = state.current_path.clone();
     let current_path_line = Line::from(current_path).style(ctx.theme.container_base());
     let current_path_line_block = Block::default()
@@ -212,6 +216,7 @@ pub fn render(
     .as_ref() else {
         unreachable!()
     };
+    Clear.render(right, buf);
 
     let &[left_top, left_bottom] = Layout::new(
         Direction::Vertical,
@@ -258,12 +263,14 @@ pub fn render(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
+                .style(ctx.theme.container_border())
                 .title_top(Line::raw("Log")),
         );
     log_widget.render(rb_top, buf);
 
     let gauge_block = Block::default()
         .borders(Borders::ALL)
+        .style(ctx.theme.container_border())
         .border_type(BorderType::Rounded);
     let el = state.elapsed.elapsed();
     if state.is_downloading {
@@ -330,15 +337,19 @@ pub fn render(
             .cloned()
             .collect::<Vec<_>>();
         Paragraph::new(vec![Line::from(hints), Line::from(hints_2)])
+            .styles(ctx.theme.paragraph_style())
             .alignment(ratatui::layout::Alignment::Center)
-            .block(gauge_block.title("Keybinds"))
+            .block(
+                gauge_block
+                    .style(ctx.theme.container_border())
+                    .title("Keybinds"),
+            )
             .render(rb_bottom, buf, &mut ParagraphState::default());
-        state
-            .effects
-            .process_effects(el.mul_f64(7.0).into(), buf, rb_bottom);
+        //       state
+        //           .effects
+        //           .process_effects(el.mul_f64(2.0).into(), buf, rb_bottom);
     }
 
-    Clear.render(right_top, buf);
     if let Some(row) = state.table_state.selected() {
         let file = state.get_file_entries().get(row);
         if let Some(file) = file {
@@ -350,6 +361,7 @@ pub fn render(
                         Block::bordered()
                             .border_type(BorderType::Rounded)
                             .title_top("Content")
+                            .style(ctx.theme.container_border())
                             .padding(Padding::uniform(1)),
                     )
                     .scroll(Scroll::new())
@@ -360,18 +372,19 @@ pub fn render(
                     .block(
                         Block::bordered()
                             .border_type(BorderType::Rounded)
+                            .style(ctx.theme.container_border())
                             .title_top("Details")
                             .padding(Padding::uniform(1)),
                     )
                     .scroll(Scroll::new())
                     .styles(ctx.theme.paragraph_style())
             };
-            Clear.render(right_top, buf);
             paragraph.render(right_top, buf, &mut state.details_para_state);
         }
     } else {
         Block::bordered()
             .border_type(BorderType::Rounded)
+            .style(ctx.theme.container_border())
             .title_top("Details")
             .render(right_top, buf);
     }
@@ -386,7 +399,7 @@ pub fn render(
     };
     let input = TextInput::new().style(ctx.theme.container_base()).block(
             Block::bordered()
-
+                .style(ctx.theme.container_border())
                 .border_type(BorderType::Rounded)
                 .border_style(match_focus!(state.input_state => ctx.theme.container_border().fg(ratatui::style::Color::Yellow), else => ctx.theme.container_border()))
                 .title_top(input_block_title)
@@ -516,11 +529,14 @@ pub fn event(
                 );
                     match event {
                         ct_event!(key press 'j') => {
+                            state.current_file_content = None;
                             state.detail_window_mode = DetailWindowMode::Details;
+
                             state.table_state.move_down(1);
                             Control::<AppEvent>::Changed
                         }
                         ct_event!(key press 'k') => {
+                            state.current_file_content = None;
                         state.detail_window_mode = DetailWindowMode::Details;
                             state.table_state.move_up(1);
                             Control::Changed
@@ -679,7 +695,7 @@ pub fn event(
             let name = name.clone();
 
             info!(name, path = ?path.display(), "File Details");
-            ctx.spawn_async_ext(|chan| async move {
+            ctx.spawn_async_ext(|_| async move {
                 let sftp = {
                     let mut session = session.lock().await;
                     session.sftp().await?

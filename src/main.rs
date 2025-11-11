@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
-use crate::ssh::Session;
 use crate::cli::Cli;
+use crate::ssh::Session;
 use async_lock::Mutex as AsyncMutex;
 use clap::Parser;
 use color_eyre::eyre::{self, Result};
+use rat_theme3::salsa_themes;
 use tracing::info;
 
 mod cli;
@@ -45,6 +46,8 @@ fn main() -> Result<()> {
     let sftp = Arc::new(sftp);
     let session = Arc::new(AsyncMutex::new(session));
     //  Run the parallel walker with a visitor closure
+    let themes = salsa_themes();
+    println!("themes: {:?}", themes);
     crate::tui::tui(cli.path.display().to_string(), cli, rt, sftp, session)?;
     eyre::Ok(())
 }

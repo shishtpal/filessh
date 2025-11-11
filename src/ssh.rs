@@ -5,12 +5,11 @@ use std::time::Duration;
 
 use color_eyre::Result;
 use color_eyre::eyre::bail;
-use futures::FutureExt;
 use russh::keys::*;
 use russh::*;
 use russh_sftp::client::SftpSession;
 use tokio::net::ToSocketAddrs;
-use tracing::{debug, info};
+use tracing::debug;
 
 struct Client {}
 
