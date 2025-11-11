@@ -1,8 +1,4 @@
 use std::borrow::Cow;
-///
-/// Run this example with:
-/// cargo run --example client_exec_simple -- -k <private key path> <host> <command>
-///
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;

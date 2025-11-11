@@ -141,10 +141,7 @@ impl MainUI {
             input_state: TextInputState::default(),
             input_mode: InputMode::default(),
             sftp,
-            log_state: TuiWidgetState::new()
-                .set_default_display_level(LevelFilter::Off)
-                .set_level_for_target("App", LevelFilter::Debug)
-                .set_level_for_target("background-task", LevelFilter::Info),
+            log_state: TuiWidgetState::new(),
             throbber: ThrobberState::default(),
             is_downloading: false,
             download_progress: 0.0,
