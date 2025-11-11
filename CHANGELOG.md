@@ -4,14 +4,18 @@
 
 - Created till functioning tui
 - *(TUI)* Made the TUI faster by removing multiple ssh connections
-- Added TachyonFx for smooth transitions
-- *(tui)* Added content viewing
+- *(TUI)* Added line gauge, fixed errors
+- *(TUI)* Added a remaining files download list
+- *(TUI)* Added TachyonFx for smooth transitions
+- *(TUI)* Added content viewing
 - [**breaking**] Added provisional README
+- *(docs)* Added git-cliff support
 
 ### Bug Fixes
 
-- *(tui)* Fixed the tui-logger widget
+- *(TUI)* Fixed the tui-logger widget
 - *(log)* Fixed logging
+- *(lint)* Fixed clippy lints
 
 ### Refactor
 
