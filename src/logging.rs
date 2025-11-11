@@ -38,7 +38,7 @@ pub fn init() -> Result<()> {
     let log_path = directory.join(LOG_FILE.clone());
     println!("Logging to {}", log_path.display());
     let log_file = std::fs::File::create(log_path)?;
-    let env_filter = EnvFilter::builder().with_default_directive(tracing::Level::DEBUG.into());
+    let env_filter = EnvFilter::builder().with_default_directive(tracing::Level::INFO.into());
     // If the `RUST_LOG` environment variable is set, use that as the default, otherwise use the
     // value of the `LOG_ENV` environment variable. If the `LOG_ENV` environment variable contains
     // errors, then this will return an error.

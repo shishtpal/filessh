@@ -4,6 +4,7 @@ use crate::files::FileEntry;
 use crate::ssh::Session;
 use async_lock::Mutex;
 use color_eyre::Report as Error;
+use color_eyre::eyre::Result;
 use rat_salsa::event::RenderedEvent;
 use rat_salsa::poll::{PollCrossterm, PollRendered, PollTasks, PollTimers};
 use rat_salsa::timer::TimeOut;
@@ -107,6 +108,7 @@ pub enum AppEvent {
     Throb,
     Gauge(f64),
     SetTotalFilesToDownload(usize),
+    UpdateContent(Option<String>),
     UpdateFiles(Vec<FileEntry>),
     DownloadFile(String, PathBuf, Option<String>),
     DownloadFolder(String, PathBuf),
@@ -275,6 +277,8 @@ pub fn error(
     _ctx: &mut Global,
 ) -> Result<Control<AppEvent>, Error> {
     error!("{:?}", &*event);
-    state.error_dlg.append(format!("{:?}", &*event).as_str());
+    let r: Result<()> = Err(event);
+    r.unwrap();
+    //state.error_dlg.append(format!("{:?}", &*event).as_str());
     Ok(Control::Changed)
 }

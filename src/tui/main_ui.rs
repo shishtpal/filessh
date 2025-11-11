@@ -49,6 +49,7 @@ use ratatui::text::Span;
 use ratatui::widgets::Block;
 use ratatui::widgets::BorderType;
 use ratatui::widgets::Borders;
+use ratatui::widgets::Clear;
 use ratatui::widgets::Padding;
 use ratatui::widgets::StatefulWidget;
 use ratatui::widgets::Widget;
@@ -72,10 +73,8 @@ use throbber_widgets_tui::ThrobberState;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 
-use tokio::time::sleep;
 use tracing::debug;
 use tracing::{error, info};
-use tui_logger::LevelFilter;
 use tui_logger::TuiLoggerLevelOutput;
 use tui_logger::TuiLoggerWidget;
 use tui_logger::TuiWidgetState;
@@ -113,12 +112,22 @@ pub struct MainUI {
     pub throbber_cancel: Option<Cancel>,
     pub effects: EffectManager<()>,
     pub elapsed: Instant,
+    pub details_para_state: ParagraphState,
+    pub detail_window_mode: DetailWindowMode,
+    pub current_file_content: Option<String>,
 }
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
     #[default]
     Filter,
     DownloadPath,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum DetailWindowMode {
+    #[default]
+    Details,
+    Content,
 }
 
 impl MainUI {
@@ -153,6 +162,9 @@ impl MainUI {
             throbber_cancel: None,
             effects,
             elapsed: Instant::now(),
+            details_para_state: ParagraphState::default(),
+            detail_window_mode: DetailWindowMode::default(),
+            current_file_content: None,
         }
     }
 
@@ -223,7 +235,7 @@ pub fn render(
         Direction::Vertical,
         [
             Constraint::Fill(1),
-            Constraint::Length(if state.is_downloading { 9 } else { 3 }),
+            Constraint::Length(if state.is_downloading { 9 } else { 4 }),
         ],
     )
     .split(right_bottom)
@@ -236,10 +248,9 @@ pub fn render(
         .style_warn(Style::default().fg(Color::Yellow))
         .style_trace(Style::default().fg(Color::Magenta))
         .style_info(Style::default().fg(Color::Green))
-        .output_separator(':')
         .output_timestamp(Some("%H:%M:%S".to_string()))
         .output_level(Some(TuiLoggerLevelOutput::Long))
-        .output_target(false)
+        .output_target(true)
         .output_file(false)
         .output_line(false)
         .state(&state.log_state)
@@ -254,6 +265,7 @@ pub fn render(
     let gauge_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded);
+    let el = state.elapsed.elapsed();
     if state.is_downloading {
         let &[rb_bottom_1, rb_bottom_2] = Layout::new(
             Direction::Vertical,
@@ -291,7 +303,6 @@ pub fn render(
         gauge_block.title("Progress").render(rb_bottom, buf);
 
         gauge.render(progress_area, buf);
-        let el = state.elapsed.elapsed();
         state.elapsed = Instant::now();
         state
             .effects
@@ -313,24 +324,50 @@ pub fn render(
         .flatten()
         .cloned()
         .collect::<Vec<_>>();
-        Paragraph::new(vec![Line::from(hints)])
+        let hints_2 = [keybind("Enter", "View Content  ")]
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        Paragraph::new(vec![Line::from(hints), Line::from(hints_2)])
             .alignment(ratatui::layout::Alignment::Center)
             .block(gauge_block.title("Keybinds"))
             .render(rb_bottom, buf, &mut ParagraphState::default());
+        state
+            .effects
+            .process_effects(el.mul_f64(7.0).into(), buf, rb_bottom);
     }
 
+    Clear.render(right_top, buf);
     if let Some(row) = state.table_state.selected() {
         let file = state.get_file_entries().get(row);
         if let Some(file) = file {
-            let paragraph = Paragraph::from(file.clone())
-                .block(
-                    Block::bordered()
-                        .border_type(BorderType::Rounded)
-                        .title_top("Details")
-                        .padding(Padding::uniform(1)),
-                )
-                .styles(ctx.theme.paragraph_style());
-            paragraph.render(right_top, buf, &mut ParagraphState::default());
+            let paragraph = if let Some(content) = &state.current_file_content
+                && state.detail_window_mode == DetailWindowMode::Content
+            {
+                Paragraph::new(content.clone())
+                    .block(
+                        Block::bordered()
+                            .border_type(BorderType::Rounded)
+                            .title_top("Content")
+                            .padding(Padding::uniform(1)),
+                    )
+                    .scroll(Scroll::new())
+                    .styles(ctx.theme.paragraph_style())
+            } else {
+                Clear.render(right_top, buf);
+                Paragraph::from(file.clone())
+                    .block(
+                        Block::bordered()
+                            .border_type(BorderType::Rounded)
+                            .title_top("Details")
+                            .padding(Padding::uniform(1)),
+                    )
+                    .scroll(Scroll::new())
+                    .styles(ctx.theme.paragraph_style())
+            };
+            Clear.render(right_top, buf);
+            paragraph.render(right_top, buf, &mut state.details_para_state);
         }
     } else {
         Block::bordered()
@@ -389,7 +426,7 @@ pub fn render(
     Ok(())
 }
 
-impl_has_focus!(table_state, input_state for MainUI);
+impl_has_focus!(table_state, input_state, details_para_state for MainUI);
 
 pub fn init(
     state: &mut MainUI, //
@@ -439,6 +476,8 @@ pub fn event(
                 }
                 ct_event!(keycode press Esc) => {
                     ctx.focus().focus(&state.table_state);
+                    state.filtered_file_entries.clear();
+                    state.input_state.clear();
                     Control::Changed
                 }
                 _ => Control::Continue,
@@ -458,26 +497,58 @@ pub fn event(
                 }
                 v => v.into(),
             });
+            try_flow!(state.details_para_state.handle(event, Regular));
+
             try_flow!(match_focus!(
                 state.table_state => {
                 try_flow!(
-                    rowselection::handle_events(
+                    match rowselection::handle_events(
                         &mut state.table_state,
                         true,
                         event
-                    )
+                    ) {
+                    rat_ftable::event::TableOutcome::Selected => {
+                        state.detail_window_mode = DetailWindowMode::Details;
+                        Control::Changed
+                    }
+                    v => v.into(),
+                }
                 );
                     match event {
                         ct_event!(key press 'j') => {
+                            state.detail_window_mode = DetailWindowMode::Details;
                             state.table_state.move_down(1);
                             Control::<AppEvent>::Changed
                         }
                         ct_event!(key press 'k') => {
+                        state.detail_window_mode = DetailWindowMode::Details;
                             state.table_state.move_up(1);
                             Control::Changed
                         }
+                        ct_event!(keycode press Enter) => {
+                        if let Some(row_idx) = state.table_state.selected() && let Some(row) = state.get_file_entries().get(row_idx) && row.is_file() {
+
+                                let sftp = Arc::clone(&state.sftp);
+                                let current_path = state.current_path.clone();
+                                let row = row.clone();
+                                ctx.spawn_async_ext(async move |_| {
+                                    let mut file = sftp
+                                        .open(current_path.clone() + "/" + row.name())
+                                    .await?;
+                                    let mut buf = Vec::new();
+                                    file.read_to_end(&mut buf).await?;
+                                    let content = String::from_utf8(buf).ok();
+
+                                    Ok(Control::Event(AppEvent::UpdateContent(content)))
+                                });
+
+                                state.detail_window_mode = DetailWindowMode::Content;
+                            }
+                            Control::Continue
+                        }
                         ct_event!(keycode press Left ) | ct_event!(key press 'h')=> {
 
+                        state.detail_window_mode = DetailWindowMode::Details;
                             let path = PathBuf::from(state.current_path.clone());
                             let parent = path.parent();
                             if let Some(parent) = parent {
@@ -491,6 +562,7 @@ pub fn event(
                         }
 
                         ct_event!(key press 'l') | ct_event!(keycode press Right) => {
+                        state.detail_window_mode = DetailWindowMode::Details;
                             let path = PathBuf::from(state.current_path.clone());
                             let selected = state.table_state.selected();
                             if let Some(selected) = selected {
@@ -527,7 +599,9 @@ pub fn event(
                         match event {
                             ct_event!(keycode press Enter) => {
                                 let path:String = state.input_state.value();
-                                let path = PathBuf::from(path).canonicalize()?;
+                                let path = PathBuf::from(path);
+                                std::fs::create_dir_all(path.clone())?;
+                                let path = path.canonicalize()?;
                                 let selected = state.table_state.selected();
                                 if let Some(selected) = selected {
                                     let Some(file) = state.get_file_entries().get(selected) else {
@@ -575,6 +649,10 @@ pub fn event(
                 Ok(Control::Changed)
             })?;
             state.throbber_cancel = Some(cancel.0);
+            Control::Changed
+        }
+        AppEvent::UpdateContent(content) => {
+            state.current_file_content = content.clone();
             Control::Changed
         }
         AppEvent::DownloadEnd => {
@@ -630,9 +708,8 @@ pub fn event(
             let session = Arc::clone(&state.session);
             let dirname = file.split('/').next_back().unwrap_or("");
             std::fs::create_dir_all(path.clone())?;
-            info!(path =?path.display(), dirname, "Path and dirname");
             let path = path.clone().canonicalize()?;
-            //.join(dirname);
+            info!(path =?path.display(), dirname, "Path and dirname");
 
             let file = file.clone();
             ctx.spawn_async_ext(|chan| async move {

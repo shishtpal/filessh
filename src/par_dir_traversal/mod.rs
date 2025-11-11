@@ -1,3 +1,5 @@
+/// Inspired by the Parallel Walker in the
+/// `ignore` crate
 use color_eyre::eyre::Result;
 use crossbeam::deque::{Stealer, Worker as Deque};
 use futures::future::join_all; // add at top of file if not present
