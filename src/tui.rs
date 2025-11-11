@@ -4,7 +4,6 @@ use crate::files::FileEntry;
 use crate::ssh::Session;
 use async_lock::Mutex;
 use color_eyre::Report as Error;
-use rat_focus::Focus;
 use rat_salsa::event::RenderedEvent;
 use rat_salsa::poll::{PollCrossterm, PollRendered, PollTasks, PollTimers};
 use rat_salsa::timer::TimeOut;
@@ -20,7 +19,6 @@ use ratatui::crossterm;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::widgets::StatefulWidget;
 use russh_sftp::client::SftpSession;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -115,6 +113,7 @@ pub enum AppEvent {
     Message(String),
     Status(usize, String),
     AsyncMsg(String),
+    UpdateNextFiveFiles(Vec<FileEntry>),
     AsyncTick(u32),
 }
 
@@ -286,7 +285,7 @@ pub mod main_ui {
 
     use super::AppEvent;
     use super::Global;
-    use ::futures::executor::block_on;
+    
     use color_eyre::Report as Error;
     use color_eyre::eyre;
     use color_eyre::eyre::Result;
@@ -301,7 +300,7 @@ pub mod main_ui {
     use rat_ftable::selection::RowSelection;
     use rat_ftable::selection::rowselection;
     use rat_ftable::textdata::Cell;
-    use rat_salsa::tasks::Cancel;
+    
     use rat_salsa::{Control, SalsaContext};
     use rat_widget::event::TextOutcome;
     use rat_widget::event::{HandleEvent, Regular};
@@ -320,7 +319,7 @@ pub mod main_ui {
     use ratatui::style::Stylize;
     use ratatui::symbols;
     use ratatui::symbols::line::HORIZONTAL;
-    use ratatui::symbols::line::HORIZONTAL_UP;
+    
     use ratatui::symbols::line::ROUNDED_TOP_LEFT;
     use ratatui::text::Line;
     use ratatui::text::Span;
@@ -337,11 +336,11 @@ pub mod main_ui {
     use std::sync::Arc;
     use std::sync::Mutex;
     use std::time::Duration;
-    use throbber_widgets_tui::Throbber;
+    
     use throbber_widgets_tui::ThrobberState;
     use tokio::io::AsyncReadExt;
     use tokio::io::AsyncWriteExt;
-    use tokio::sync::futures;
+    
     use tokio::time::sleep;
     use tracing::debug;
     use tracing::{error, info};
@@ -379,6 +378,7 @@ pub mod main_ui {
         pub total_files_to_download: usize,
         pub downloaded_files: usize,
         pub download_progress: f64,
+        pub next_five_files: Vec<FileEntry>,
     }
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
     pub enum InputMode {
@@ -411,6 +411,7 @@ pub mod main_ui {
                 session,
                 total_files_to_download: 0,
                 downloaded_files: 0,
+                next_five_files: Vec::new(),
             }
         }
 
@@ -479,7 +480,10 @@ pub mod main_ui {
 
         let &[rb_top, rb_bottom] = Layout::new(
             Direction::Vertical,
-            [Constraint::Fill(1), Constraint::Length(3)],
+            [
+                Constraint::Fill(1),
+                Constraint::Length(if state.is_downloading { 9 } else { 3 }),
+            ],
         )
         .split(right_bottom)
         .as_ref() else {
@@ -510,17 +514,37 @@ pub mod main_ui {
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded);
         if state.is_downloading {
+            let &[rb_bottom_1, rb_bottom_2] = Layout::new(
+                Direction::Vertical,
+                [Constraint::Length(3), Constraint::Length(6)],
+            )
+            .split(rb_bottom)
+            .as_ref() else {
+                unreachable!()
+            };
+            let progress_area = gauge_block.inner(rb_bottom_1).inner(Margin::new(1, 0));
+            let para_area = gauge_block.inner(rb_bottom_2).inner(Margin::new(1, 0));
             let gauge = LineGauge::default()
                 .filled_style(Style::default().fg(Color::Black).on_green())
                 .unfilled_style(ctx.theme.container_base())
-                .block(gauge_block.padding(Padding::horizontal(1)))
+                // .block(gauge_block.clone().padding(Padding::horizontal(1)))
                 .ratio(state.download_progress)
                 .label(format!(
                     "Downloaded {:.0}/{}  ",
                     state.downloaded_files, state.total_files_to_download
                 ))
                 .line_set(CHARSET);
-            gauge.render(rb_bottom, buf);
+            let next_files = state
+                .next_five_files
+                .iter()
+                .map(|f| Line::from(vec![Span::from(f.name())]))
+                .collect::<Vec<_>>();
+            Paragraph::new(next_files)
+                // .block(gauge_block.clone().padding(Padding::horizontal(1)))
+                .alignment(ratatui::layout::Alignment::Left)
+                .render(para_area, buf, &mut ParagraphState::default());
+            gauge_block.title("Progress").render(rb_bottom, buf);
+            gauge.render(progress_area, buf);
         } else {
             let hints = [
                 keybind("Tab", "Focus  "),
@@ -772,6 +796,10 @@ pub mod main_ui {
                 state.is_downloading = false;
                 Control::Changed
             }
+            AppEvent::UpdateNextFiveFiles(files) => {
+                state.next_five_files = files.to_vec();
+                Control::Changed
+            }
             AppEvent::Gauge(progress) => {
                 state.download_progress = *progress;
                 state.downloaded_files += 1;
@@ -864,8 +892,9 @@ pub mod main_ui {
                     let total = collected_snapshot.len() as f64;
                     chan.send(Ok(Control::Event(AppEvent::SetTotalFilesToDownload(total as usize)))).await?;
                     let mut progress = 0.0;
+                    let mut windows = collected_snapshot.windows(6);
 
-                    for entry in collected_snapshot {
+                    for (i,entry) in collected_snapshot.iter().enumerate() {
                         chan.send(Ok(Control::Event(AppEvent::Throb))).await?;
                         let file = file.clone();
                         let filename = entry.name().strip_prefix(&file).unwrap_or(entry.name()).replacen("/", "", 1).to_string();
@@ -880,6 +909,10 @@ pub mod main_ui {
                         })?;
                         let _ = reply_rx.await.unwrap();
                         progress += 1.0;
+                        if total - i as f64 >5.0                        {
+                            let window = windows.next().unwrap();
+                            chan.send(Ok(Control::Event(AppEvent::UpdateNextFiveFiles(window.to_vec())))).await?;
+                        }
                         chan.send(Ok(Control::Event(AppEvent::Gauge(progress/ total)))).await?;
 
 

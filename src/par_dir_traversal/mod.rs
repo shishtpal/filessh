@@ -6,7 +6,6 @@ use russh_sftp::{
     protocol::FileType,
 };
 use std::{
-    mem,
     path::PathBuf,
     sync::{
         Arc,
@@ -14,7 +13,6 @@ use std::{
     },
 };
 use tokio::task::JoinHandle;
-use tracing::info;
 
 use crate::files::FileEntry;
 
@@ -79,7 +77,7 @@ impl WalkParallel {
         self.visit(&mut FnBuilder { builder: mkf }).await
     }
 
-    pub async fn visit(mut self, builder: &mut dyn ParallelVisitorBuilder<'static>) {
+    pub async fn visit(self, builder: &mut dyn ParallelVisitorBuilder<'static>) {
         let threads = self.threads();
 
         // --- Create the root work item ------------------------------------

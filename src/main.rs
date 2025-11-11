@@ -1,14 +1,10 @@
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
-use crate::par_dir_traversal::{WalkParallel, WalkState};
 use crate::ssh::Session;
-use crate::{cli::Cli, files::FileEntry};
+use crate::cli::Cli;
 use async_lock::Mutex as AsyncMutex;
 use clap::Parser;
 use color_eyre::eyre::{self, Result};
-use russh_sftp::client::SftpSession;
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tracing::info;
 
 mod cli;

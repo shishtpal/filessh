@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Style, Styled},
     symbols::{self},
-    text::{Line, Span},
+    text::Line,
     widgets::{Block, Widget, WidgetRef, block::BlockExt},
 };
 /// A compact widget to display a progress bar over a single thin line.
@@ -186,7 +186,7 @@ impl WidgetRef for LineGauge<'_> {
             .set_symbol("]")
             .set_style(self.unfilled_style);
         let start = col + 1;
-        if start >= gauge_area.right() {
+        if start >= gauge_area.right() - 1 {
             return;
         }
 

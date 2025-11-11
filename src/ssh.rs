@@ -3,7 +3,7 @@ use std::borrow::Cow;
 /// Run this example with:
 /// cargo run --example client_exec_simple -- -k <private key path> <host> <command>
 ///
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,7 +13,6 @@ use futures::FutureExt;
 use russh::keys::*;
 use russh::*;
 use russh_sftp::client::SftpSession;
-use tokio::io::AsyncWriteExt;
 use tokio::net::ToSocketAddrs;
 use tracing::{debug, info};
 
