@@ -344,11 +344,15 @@ pub fn render(
         .flatten()
         .cloned()
         .collect::<Vec<_>>();
-        let hints_2 = [keybind("Enter", "View Content  ")]
-            .iter()
-            .flatten()
-            .cloned()
-            .collect::<Vec<_>>();
+        let hints_2 = [
+            keybind("Enter", "View Content  "),
+            keybind("x", "Delete  "),
+            keybind("m", "Move  "),
+        ]
+        .iter()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
         Paragraph::new(vec![Line::from(hints), Line::from(hints_2)])
             .styles(ctx.theme.paragraph_style())
             .alignment(ratatui::layout::Alignment::Center)
