@@ -2,16 +2,14 @@
 
 A TUI-based file explorer for SSH servers.
 
-## Tech Stack
-
-- **Core**: Rust
-- **CLI**: `clap`
-- **SSH**: `russh`, `russh-sftp`
-- **TUI**: `ratatui`
-- **Async**: `tokio`
-- **Logging**: `tracing`
+![Made with VHS](https://vhs.charm.sh/vhs-3VcUb6HOgvuo8mtaeDbRSe.gif)
 
 ## Installation
+### Cargo
+```sh
+cargo install --locked filessh
+```
+### Build from source
 
 1.  Ensure you have Rust and Cargo installed. You can find installation instructions at [rust-lang.org](https://www.rust-lang.org/tools/install).
 2.  Clone the repository:
@@ -24,6 +22,11 @@ A TUI-based file explorer for SSH servers.
     cargo build --release
     ```
     The executable will be located at `target/release/filessh`.
+
+## Todo
+
+- [ ] Add support for rsync and scp
+- [ ] Iron out bugs
 
 ## Usage
 
@@ -52,4 +55,3 @@ filessh [OPTIONS] <HOST> <PATH>
     example.com \
     /home/myuser
 ```
-

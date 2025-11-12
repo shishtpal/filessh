@@ -1,3 +1,8 @@
+## [0.1.3] - 2025-11-12
+
+### Documentation
+
+- Added the GIF to the README
 ## [0.1.2] - 2025-11-12
 
 ### Features
