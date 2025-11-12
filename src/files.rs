@@ -120,6 +120,38 @@ impl FileEntry {
     }
 }
 
+pub struct ProgressDataSlice<'a>(pub &'a [FileEntry]);
+
+impl<'a> TableData<'a> for ProgressDataSlice<'a> {
+    fn rows(&self) -> usize {
+        self.0.len()
+    }
+    fn render_cell(
+        &self,
+        _ctx: &rat_ftable::TableContext,
+        column: usize,
+        row: usize,
+        area: ratatui::prelude::Rect,
+        buf: &mut ratatui::prelude::Buffer,
+    ) {
+        let entry = &self.0[row];
+        match column {
+            0 => {
+                let name = entry.name();
+                let span = Span::from(name);
+                span.render(area, buf);
+            }
+            1 => {
+                let size = entry.attributes.size.unwrap_or_default();
+                let size_string = human_readable_size(size);
+                let span = Span::from(size_string);
+                span.render(area, buf);
+            }
+            _ => {}
+        }
+    }
+}
+
 impl<'a> TableData<'a> for FileDataSlice<'a> {
     fn rows(&self) -> usize {
         self.0.len()

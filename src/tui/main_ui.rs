@@ -1,5 +1,6 @@
 use crate::files::FileDataSlice;
 use crate::files::FileEntry;
+use crate::files::ProgressDataSlice;
 use crate::par_dir_traversal::WalkParallel;
 use crate::par_dir_traversal::WalkState;
 use crate::patched_line_gauge::LineGauge;
@@ -17,6 +18,7 @@ use rat_ftable::Table;
 use rat_ftable::TableState;
 use rat_ftable::event::ct_event;
 use rat_ftable::event::try_flow;
+use rat_ftable::selection::NoSelection;
 //use rat_ftable::event::try_flow;
 use async_lock::Mutex as AsyncMutex;
 use rat_ftable::selection::RowSelection;
@@ -270,6 +272,7 @@ pub fn render(
 
     let gauge_block = Block::default()
         .borders(Borders::ALL)
+        .padding(Padding::horizontal(1))
         .style(ctx.theme.container_border())
         .border_type(BorderType::Rounded);
     let el = state.elapsed.elapsed();
@@ -289,8 +292,8 @@ pub fn render(
             ))
             .throbber_set(throbber_widgets_tui::ASCII);
 
-        let progress_area = gauge_block.inner(rb_bottom_1).inner(Margin::new(1, 0));
-        let para_area = gauge_block.inner(rb_bottom_2).inner(Margin::new(1, 0));
+        let progress_area = gauge_block.inner(rb_bottom_1);
+        let para_area = gauge_block.inner(rb_bottom_2);
         let gauge = LineGauge::default()
             .filled_style(Style::default().fg(Color::Black).on_green())
             .unfilled_style(ctx.theme.container_base())
@@ -298,15 +301,20 @@ pub fn render(
             .ratio(state.download_progress)
             .label(throbber)
             .line_set(CHARSET);
-        let next_files = state
-            .next_five_files
-            .iter()
-            .map(|f| Line::from(vec![Span::from(f.name())]))
-            .collect::<Vec<_>>();
-        Paragraph::new(next_files)
-            // .block(gauge_block.clone().padding(Padding::horizontal(1)))
-            .alignment(ratatui::layout::Alignment::Left)
-            .render(para_area, buf, &mut ParagraphState::default());
+        let next_five_files = state.next_five_files.clone();
+        let data = ProgressDataSlice(&Vec::from(next_five_files));
+        let table = Table::<NoSelection>::new()
+            .data(data)
+            .widths([Constraint::Percentage(70), Constraint::Percentage(30)])
+            .column_spacing(1)
+            .block(Block::default().padding(Padding::ZERO))
+            .header(rat_ftable::textdata::Row::new([
+                Cell::from("Name"),
+                Cell::from("Size"),
+            ]))
+            .styles(ctx.theme.table_style());
+
+        table.render(para_area, buf, &mut TableState::<NoSelection>::default());
         gauge_block.title("Progress").render(rb_bottom, buf);
 
         gauge.render(progress_area, buf);
@@ -360,7 +368,7 @@ pub fn render(
                     .block(
                         Block::bordered()
                             .border_type(BorderType::Rounded)
-                            .title_top("Content")
+                            .title_top("[2] Content")
                             .style(ctx.theme.container_border())
                             .padding(Padding::uniform(1)),
                     )
@@ -373,7 +381,7 @@ pub fn render(
                         Block::bordered()
                             .border_type(BorderType::Rounded)
                             .style(ctx.theme.container_border())
-                            .title_top("Details")
+                            .title_top("[2] Details")
                             .padding(Padding::uniform(1)),
                     )
                     .scroll(Scroll::new())
@@ -385,16 +393,20 @@ pub fn render(
         Block::bordered()
             .border_type(BorderType::Rounded)
             .style(ctx.theme.container_border())
-            .title_top("Details")
+            .title_top("[2] Details")
             .render(right_top, buf);
     }
     let input_block_title = match state.input_mode {
-        InputMode::Filter => "Filter".to_string(),
+        InputMode::Filter => "[3] Filter".to_string(),
         InputMode::DownloadPath => {
             let current_item = state.table_state.selected_checked().unwrap_or_default();
             let file = state.get_file_entries()[current_item].clone();
 
-            format!("Download [{}/{}] to Path", state.current_path, file.name())
+            format!(
+                "[3] Download [{}/{}] to Path",
+                state.current_path,
+                file.name()
+            )
         }
     };
     let input = TextInput::new().style(ctx.theme.container_base()).block(
@@ -415,6 +427,7 @@ pub fn render(
             Block::bordered()
                 .padding(Padding::horizontal(1))
                 .border_type(block::BorderType::Rounded)
+                .title_top("[1]")
                 .border_style(ctx.theme.container_border()),
         )
         .data(data)
@@ -491,6 +504,14 @@ pub fn event(
                     ctx.focus().focus(&state.table_state);
                     state.filtered_file_entries.clear();
                     state.input_state.clear();
+                    Control::Changed
+                }
+                ct_event!(key press '1') => {
+                    ctx.focus().focus(&state.table_state);
+                    Control::Changed
+                }
+                ct_event!(key press '2') => {
+                    ctx.focus().focus(&state.details_para_state);
                     Control::Changed
                 }
                 _ => Control::Continue,
