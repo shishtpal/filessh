@@ -1,3 +1,23 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.2](https://github.com/JayanAXHF/filessh/compare/v0.1.1...v0.1.2) - 2025-11-12
+
+### Added
+
+- *(TUI)* Added file sizes to the download progress.
+
+### Other
+
+- *(optimization)* Added optimization options to `Cargo.toml`
+- Formatted Changelog
+- *(deps:release-plz)* setup release-plz
 ## [0.1.1] - 2025-11-11
 
 ### Miscellaneous Tasks
