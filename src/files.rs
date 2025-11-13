@@ -7,6 +7,7 @@ use ratatui::prelude::Line;
 use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::symbols::line::{ROUNDED_BOTTOM_LEFT, VERTICAL_RIGHT};
 use ratatui::{text::Span, widgets::Widget};
+use russh_sftp::client::fs::Metadata;
 use russh_sftp::protocol::{FileAttributes, FileType};
 
 #[derive(Getters, Debug, Clone)]
@@ -39,6 +40,98 @@ impl FileEntry {
     }
     pub fn is_symlink(&self) -> bool {
         self.type_ == FileType::Symlink
+    }
+}
+
+pub struct MetadataTable {
+    pub attribute: Box<str>,
+    pub value: Box<str>,
+}
+
+pub struct MetadataSlice<'a>(pub &'a [MetadataTable]);
+
+impl<'a> MetadataSlice<'a> {
+    pub fn from_attributes(value: Metadata, rows: &'a mut Vec<MetadataTable>) -> Self {
+        rows.push(MetadataTable::new(
+            "size".into(),
+            human_readable_size(value.size.unwrap_or_default()),
+        ));
+
+        rows.push(MetadataTable::new(
+            "uid".into(),
+            value.uid.map(|v| v.to_string()).unwrap_or_default(),
+        ));
+
+        rows.push(MetadataTable::new(
+            "user".into(),
+            value.user.clone().unwrap_or_default(),
+        ));
+
+        rows.push(MetadataTable::new(
+            "gid".into(),
+            value.gid.map(|v| v.to_string()).unwrap_or_default(),
+        ));
+
+        rows.push(MetadataTable::new(
+            "group".into(),
+            value.group.clone().unwrap_or_default(),
+        ));
+
+        rows.push(MetadataTable::new(
+            "permissions".into(),
+            value
+                .permissions
+                .map(|p| format!("{:o}", p)) // octal formatting e.g. 755
+                .unwrap_or_default(),
+        ));
+
+        rows.push(MetadataTable::new(
+            "access time".into(),
+            format_timestamp(value.atime).unwrap_or_default(),
+        ));
+
+        rows.push(MetadataTable::new(
+            "modification time".into(),
+            format_timestamp(value.mtime).unwrap_or_default(),
+        ));
+
+        Self(rows)
+    }
+}
+
+impl MetadataTable {
+    pub fn new(attribute: String, value: String) -> Self {
+        Self {
+            attribute: attribute.into(),
+            value: value.into(),
+        }
+    }
+}
+
+impl<'a> TableData<'a> for MetadataSlice<'a> {
+    fn rows(&self) -> usize {
+        self.0.len()
+    }
+    fn render_cell(
+        &self,
+        _ctx: &rat_ftable::TableContext,
+        column: usize,
+        row: usize,
+        area: ratatui::prelude::Rect,
+        buf: &mut ratatui::prelude::Buffer,
+    ) {
+        let entry = &self.0[row];
+        match column {
+            0 => {
+                let span = Span::from(entry.attribute.clone().to_string());
+                span.render(area, buf);
+            }
+            1 => {
+                let span = Span::from(entry.value.clone().to_string());
+                span.render(area, buf);
+            }
+            _ => {}
+        }
     }
 }
 

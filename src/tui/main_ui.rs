@@ -1,6 +1,7 @@
 use crate::files::FileDataSlice;
 use crate::files::FileEntry;
 use crate::files::JoinablePaths;
+use crate::files::MetadataSlice;
 use crate::files::ProgressDataSlice;
 use crate::par_dir_traversal::WalkParallel;
 use crate::par_dir_traversal::WalkState;
@@ -249,7 +250,7 @@ pub fn render(
 
     let &[right_top, right_bottom] = Layout::new(
         Direction::Vertical,
-        [Constraint::Percentage(50), Constraint::Percentage(50)],
+        [Constraint::Percentage(30), Constraint::Percentage(70)],
     )
     .split(right)
     .as_ref() else {
@@ -378,7 +379,7 @@ pub fn render(
     if let Some(row) = state.table_state.selected() {
         let file = state.get_file_entries().get(row);
         if let Some(file) = file {
-            let paragraph = if let Some(content) = &state.current_file_content
+            if let Some(content) = &state.current_file_content
                 && state.detail_window_mode == DetailWindowMode::Content
             {
                 Paragraph::new(content.clone())
@@ -391,20 +392,31 @@ pub fn render(
                     )
                     .scroll(Scroll::new())
                     .styles(ctx.theme.paragraph_style())
+                    .render(right_top, buf, &mut state.details_para_state);
             } else {
                 Clear.render(right_top, buf);
-                Paragraph::from(file.clone())
+                let metadata = file.attributes();
+                let mut buffer = Vec::new();
+                let metadata_table = MetadataSlice::from_attributes(metadata.clone(), &mut buffer);
+                let table = Table::<NoSelection>::new()
+                    .data(metadata_table)
+                    .widths([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .styles(ctx.theme.table_style())
+                    .header(rat_ftable::textdata::Row::new([
+                        Cell::from("Attribute"),
+                        Cell::from("Value"),
+                    ]))
+                    .column_spacing(1)
                     .block(
                         Block::bordered()
                             .border_type(BorderType::Rounded)
+                            .title_top("[2] Metadata")
                             .style(ctx.theme.container_border())
-                            .title_top("[2] Details")
                             .padding(Padding::uniform(1)),
                     )
-                    .scroll(Scroll::new())
-                    .styles(ctx.theme.paragraph_style())
+                    .scroll(Scroll::new());
+                table.render(right_top, buf, &mut TableState::<NoSelection>::default());
             };
-            paragraph.render(right_top, buf, &mut state.details_para_state);
         }
     } else {
         Block::bordered()
