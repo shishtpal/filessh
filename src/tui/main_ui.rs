@@ -38,7 +38,10 @@ use rat_widget::text_input::TextInputState;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm;
 use ratatui::crossterm::ExecutableCommand;
+use ratatui::crossterm::cursor::MoveToRow;
+use ratatui::crossterm::cursor::Show;
 use ratatui::crossterm::terminal::EnterAlternateScreen;
+use ratatui::crossterm::terminal::LeaveAlternateScreen;
 use ratatui::crossterm::terminal::disable_raw_mode;
 use ratatui::crossterm::terminal::enable_raw_mode;
 use ratatui::layout::Flex;
@@ -67,6 +70,7 @@ use std::collections::VecDeque;
 use std::f64;
 use std::io::stdout;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
@@ -600,6 +604,10 @@ pub fn event(
                         ct_event!(key press 'e') => {
                             Control::Event(AppEvent::SpawnExternalEditor(state.current_path.clone().join(state.get_file_entries()[state.table_state.selected_checked().unwrap_or_default()].name())))
                         }
+                        ct_event!(key press CONTROL-'o' )  => {
+                            return Ok(Control::Event(AppEvent::SpawnSSHCommand));
+
+                        }
                         ct_event!(keycode press Enter) => {
                         if let Some(row_idx) = state.table_state.selected() && let Some(row) = state.get_file_entries().get(row_idx) && row.is_file() {
 
@@ -796,6 +804,25 @@ pub fn event(
                 ctx.terminal().borrow_mut().clear()?;
                 state.in_editor = false;
             }
+            Control::Changed
+        }
+        AppEvent::SpawnSSHCommand => {
+            let path = PathBuf::from(state.current_path.clone());
+            let cli = ctx.cfg.cli.clone();
+            let mut cmd = cli.build_ssh_with_path(path);
+            state.in_editor = true;
+            stdout().execute(LeaveAlternateScreen)?;
+            stdout().execute(Show)?;
+            stdout().execute(MoveToRow(0))?;
+            {
+                ctx.terminal().borrow_mut().clear()?;
+            }
+            disable_raw_mode()?;
+            cmd.status()?;
+            stdout().execute(EnterAlternateScreen)?;
+            enable_raw_mode()?;
+            ctx.terminal().borrow_mut().clear()?;
+            state.in_editor = false;
             Control::Changed
         }
         AppEvent::DownloadStart => {

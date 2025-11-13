@@ -112,6 +112,7 @@ pub enum AppEvent {
     UpdateContent(Option<String>),
     UpdateFiles(Vec<FileEntry>),
     SpawnExternalEditor(String),
+    SpawnSSHCommand,
     DownloadFile(String, PathBuf, Option<String>),
     DownloadFolder(String, PathBuf),
     DeleteEntry(FileEntry),
