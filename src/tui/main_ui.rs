@@ -70,7 +70,6 @@ use std::collections::VecDeque;
 use std::f64;
 use std::io::stdout;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
@@ -847,6 +846,9 @@ pub fn event(
             if let Some(cancel) = state.throbber_cancel.take() {
                 cancel.cancel();
             }
+            state.download_progress = 0.0;
+            state.downloaded_files = 0;
+            state.total_files_to_download = 0;
             Control::Changed
         }
         AppEvent::UpdateNextFiveFiles(files) => {
