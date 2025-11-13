@@ -1,22 +1,22 @@
-# Changelog
-
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
 ## [0.1.6] - 2025-11-13
 
 ### Features
 
 - *(SSH)* Added the feature to access an ssh session quickly from the browser.
+
+### Miscellaneous Tasks
+
+- Release v0.1.6
 ## [0.1.5] - 2025-11-12
 
 ### Features
 
-- *(TUI)* Added the ability to edit files in an external editor.
 - *(TUI)* Updated keybind hints
+- *(TUI)* Added the ability to edit files in an external editor.
+
+### Miscellaneous Tasks
+
+- Release v0.1.5
 ## [0.1.4] - 2025-11-12
 
 ### Features
