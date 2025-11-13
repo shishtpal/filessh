@@ -343,7 +343,7 @@ pub fn render(
     } else {
         let hints = [
             keybind("Tab", "Focus  "),
-            keybind("h/j/k/l", "Naviagte Table  "),
+            keybind("h/j/k/l", "Navigate Table  "),
             keybind("d", "Download  "),
             keybind("f", "Filter  "),
         ]
