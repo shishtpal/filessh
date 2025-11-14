@@ -56,6 +56,6 @@ pub fn init() -> Result<()> {
         .with(ErrorLayer::default())
         .with(tui_logger::TuiTracingSubscriberLayer)
         .try_init()?;
-    tui_logger::init_logger(tui_logger::LevelFilter::Info).unwrap();
+    tui_logger::init_logger(tui_logger::LevelFilter::Info)?;
     Ok(())
 }
