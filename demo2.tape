@@ -1,16 +1,15 @@
-Set Theme "Aardvark Blue"
 Set Width 1920
 Set Height 1080
 Output demo2.gif
 Set TypingSpeed 350ms
 
 Set Shell zsh
-Type "filessh --username opc --private-key ~/Downloads/ssh-key-2024-06-13.key 141.148.218.223 ."
+Type@50ms "filessh --username opc --private-key ~/Downloads/ssh-key-2024-06-13.key 141.148.218.223 ."
 Sleep 12.5s
 Sleep 1s
 Enter
 Sleep 4.5s
-Type "jjjjjjjjjjjjjjjjjjjjjjjjjj"
+Type "jjjjjjjjjjjjjjjjjjjjjjjjj"
 Sleep 3s
 Type "l"
 Sleep 1s
@@ -18,9 +17,9 @@ Type "jjk"
 Sleep 3s
 Type "l"
 Sleep 1.5s
-Type "hh"
+Type@2s "hh"
 Sleep 500ms
-Type "jjjjjjjjjjjjjjj"
+Type "jjjjjjjjjjjjjj"
 Sleep 1.5s
 Type "d"
 Sleep 1s
@@ -53,5 +52,3 @@ Enter
 Sleep 6s
 Ctrl+Q
 Sleep 500ms
-Type "exit"
-Sleep 1s

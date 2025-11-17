@@ -9,7 +9,7 @@ A TUI-based file explorer for SSH servers, which allows you to browse and manage
 
 Dual-licensed under MIT or the [UNLICENSE](https://unlicense.org/).
 
-![Made with VHS](https://vhs.charm.sh/vhs-3VcUb6HOgvuo8mtaeDbRSe.gif)
+![Made with VHS](https://vhs.charm.sh/vhs-3OLXZvjKpqe5qR7hxsftQF.gif)
 
 ## Installation
 ### Cargo
