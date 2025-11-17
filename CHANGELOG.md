@@ -11,21 +11,16 @@
 
 ### Other
 
-- Fix typo in README.md
+- *(docs)* Merge pull request #18 from ZennoZenith/patch-1
 
 ### Documentation
 
+- Update the README to include license information and added the relevant license files.
 - *(README)* Updated the GIF in the readme
 
 ### Miscellaneous Tasks
 
 - *(clippy)* Fixed clippy lints
-
-## [0.1.9] - 2025-11-14
-
-### Documentation
-
-- Update the README to include license information and added the relevant license files.
 ## [0.1.8] - 2025-11-14
 
 ### Features
