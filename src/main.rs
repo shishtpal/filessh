@@ -8,6 +8,7 @@ use color_eyre::eyre::{self, Result};
 use tracing::info;
 
 mod cli;
+mod config;
 mod files;
 mod logging;
 mod par_dir_traversal;
@@ -16,10 +17,16 @@ mod ssh;
 mod tui;
 
 fn main() -> Result<()> {
-    logging::init()?;
+    let config = config::Settings::new()?;
+    let logging_config = (&config).into();
+    logging::init(logging_config)?;
 
     info!("Starting...");
     let cli = Cli::parse();
+    if cli.install_man_pages {
+        config::install_manpages()?;
+        return Ok(());
+    }
 
     info!("Connecting to {}:{}", cli.host, cli.port);
     info!("Key path: {:?}", cli.private_key);
@@ -44,6 +51,14 @@ fn main() -> Result<()> {
     })?;
     let sftp = Arc::new(sftp);
     let session = Arc::new(AsyncMutex::new(session));
-    crate::tui::tui(cli.path.display().to_string(), cli, rt, sftp, session)?;
+
+    crate::tui::tui(
+        cli.path.display().to_string(),
+        cli,
+        rt,
+        sftp,
+        session,
+        config.get_theme(),
+    )?;
     eyre::Ok(())
 }

@@ -1,5 +1,6 @@
 use self::main_ui::MainUI;
 use crate::cli::Cli;
+use crate::config::Theme;
 use crate::files::FileEntry;
 use crate::ssh::Session;
 use async_lock::Mutex;
@@ -35,9 +36,13 @@ pub fn tui(
     rt: tokio::runtime::Runtime,
     sftp: Arc<SftpSession>,
     session: Arc<Mutex<Session>>,
+    theme: &Theme,
 ) -> Result<(), Error> {
     let config = Config::new(cli);
-    let theme = create_theme("Imperial Dark").expect("theme");
+    let theme = match theme {
+        Theme::Custom(c) => c.clone().into(),
+        Theme::Default(d) => create_theme(&d.to_string()).expect("theme"),
+    };
     let mut global = Global::new(config, theme);
     let mut state = Scenery::new(current_path, sftp, session);
 

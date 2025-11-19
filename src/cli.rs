@@ -3,25 +3,39 @@ use std::{
     process::Command,
 };
 
+/// Defines the command-line interface for the application, specifying all
+/// possible arguments and options.
 #[derive(clap::Parser, Default, Debug, Clone)]
 pub struct Cli {
+    /// The remote host to connect to (e.g., 'example.com' or '192.168.1.100').
     #[clap(index = 1)]
     pub host: String,
 
+    /// The port number to use for the SSH connection.
     #[clap(long, short, default_value_t = 22)]
     pub port: u16,
 
+    /// The username for logging into the remote host.
+    /// If not provided, the SSH client may use the current local username or a
+    /// default specified in SSH configuration.
     #[clap(long, short)]
     pub username: Option<String>,
 
+    /// The path to the private key file for public key authentication.
     #[clap(long, short = 'k')]
     pub private_key: PathBuf,
 
+    /// An optional path to an OpenSSH certificate file for authentication.
     #[clap(long, short = 'o')]
     pub openssh_certificate: Option<PathBuf>,
 
+    /// The initial directory path to open on the remote host after connecting.
     #[clap(index = 2, required = true)]
     pub path: PathBuf,
+
+    /// Install the man pages for the application
+    #[clap(long, default_value_t = false)]
+    pub install_man_pages: bool,
 }
 
 impl Cli {

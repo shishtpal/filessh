@@ -7,6 +7,8 @@ use directories::ProjectDirs;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
+use crate::config::LoggingConfig;
+
 pub static PROJECT_NAME: LazyLock<String> =
     LazyLock::new(|| env!("CARGO_CRATE_NAME").to_uppercase().to_string());
 pub static DATA_FOLDER: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
@@ -32,12 +34,12 @@ pub(crate) fn project_directory() -> Option<ProjectDirs> {
     ProjectDirs::from("com", "jayanaxhf", env!("CARGO_PKG_NAME"))
 }
 
-pub fn init() -> Result<()> {
+pub fn init(cfg: LoggingConfig) -> Result<()> {
     let directory = get_data_dir();
     std::fs::create_dir_all(directory.clone())?;
     let log_path = directory.join(LOG_FILE.clone());
     let log_file = std::fs::File::create(log_path)?;
-    let env_filter = EnvFilter::builder().with_default_directive(tracing::Level::INFO.into());
+    let env_filter = EnvFilter::builder().with_default_directive(cfg.get_level().into());
     // If the `RUST_LOG` environment variable is set, use that as the default, otherwise use the
     // value of the `LOG_ENV` environment variable. If the `LOG_ENV` environment variable contains
     // errors, then this will return an error.
