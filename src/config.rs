@@ -356,12 +356,14 @@ pub fn install_manpages() -> Result<()> {
         fs::create_dir_all(&man5_dir)?;
 
         // Build file names dynamically
-        let man1_file = format!("{}.1", &*PROJECT_NAME);
-        let man5_file = format!("{}.5", &*PROJECT_NAME);
+        let man1_file = format!("{}.1", &*PROJECT_NAME).to_lowercase();
+        let man5_file = format!("{}.5", &*PROJECT_NAME).to_lowercase();
+
+        dbg!(concat!(env!("OUT_DIR"), "/filessh.1"));
 
         // Embed manpages
         // Adjust the include paths to your repo structure
-        let man1_contents = include_str!("../man/filessh.1");
+        let man1_contents = include_str!(concat!(env!("OUT_DIR"), "/filessh.1"));
         let man5_contents = include_str!("../man/filessh.5");
 
         // Write them to the correct directories

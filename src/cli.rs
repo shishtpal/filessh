@@ -6,6 +6,7 @@ use std::{
 /// Defines the command-line interface for the application, specifying all
 /// possible arguments and options.
 #[derive(clap::Parser, Default, Debug, Clone)]
+//#[command(name = "filessh")]
 pub struct Cli {
     /// The remote host to connect to (e.g., 'example.com' or '192.168.1.100').
     #[clap(index = 1)]
