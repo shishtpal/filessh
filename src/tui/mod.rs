@@ -205,7 +205,7 @@ pub fn render(
 
     state.status.status(1, format!("R {:.0?}", el).to_string());
     let remote_host_details = format!(
-        "  Conntected to {}@{}:{}  ",
+        "  Connected to {}@{}:{}  ",
         ctx.cfg.cli.username.as_ref().map_or("root", |s| s.as_str()),
         ctx.cfg.cli.host.as_str(),
         ctx.cfg.cli.port
