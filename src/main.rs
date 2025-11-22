@@ -11,6 +11,7 @@ use tracing::info;
 mod cli;
 mod completions;
 mod config;
+mod errors;
 mod files;
 mod logging;
 mod par_dir_traversal;
@@ -25,6 +26,7 @@ fn main() -> Result<()> {
 
     info!("Starting...");
     let cli = Cli::parse();
+    errors::init()?;
     match cli.command.clone() {
         Some(Commands::InstallManPages) => return config::install_manpages(),
         Some(Commands::InstallCompletions { shell }) => {
