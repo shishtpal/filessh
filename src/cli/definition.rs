@@ -1,3 +1,7 @@
+//! The CLI Module is structured this way
+//! to allow for the buils.rs script to
+//! generate the man pages and completions
+//! for the CLI at build time.
 use clap::Parser;
 use clap::command;
 use clap::crate_authors;
@@ -45,6 +49,9 @@ pub enum Commands {
 
     /// Install man pages into the system
     InstallManPages,
+
+    /// Generate a default config file to the default location
+    InitConfig,
 
     /// Generate shell completion scripts
     InstallCompletions {

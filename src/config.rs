@@ -7,9 +7,10 @@ use std::{
 
 use color_eyre::eyre::Result;
 use config::{Config, Environment, File};
+use glob::glob;
 use rat_theme3::{DarkTheme, Palette, SalsaTheme, ShellTheme};
 use ratatui::style::Color;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::logging::{PROJECT_NAME, project_directory};
 
@@ -26,7 +27,7 @@ fn current_theme() -> &'static str {
     THEME.get().unwrap()
 }
 
-#[derive(Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default)]
 pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) debug: bool,
@@ -52,7 +53,7 @@ pub(crate) fn get_config_dir() -> PathBuf {
     }
 }
 
-#[derive(Deserialize, Debug, Clone, Copy, Default)]
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, Default)]
 #[allow(unused)]
 pub enum DefaultTheme {
     #[default]
@@ -84,7 +85,7 @@ pub enum DefaultTheme {
     VSCodeShell,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum Theme {
     Custom(Box<CustomTheme>),
@@ -136,7 +137,17 @@ impl Display for DefaultTheme {
 impl Settings {
     pub(crate) fn new() -> Result<Self> {
         let s = Config::builder()
-            .add_source(File::from(get_config_dir().join("config")).required(false))
+            .add_source(
+                glob(
+                    &get_config_dir()
+                        .join("config")
+                        .join("*")
+                        .display()
+                        .to_string(),
+                )?
+                .map(|p| File::from(p.expect("Failed to read config file")))
+                .collect::<Vec<_>>(),
+            )
             .add_source(
                 Environment::with_prefix(&PROJECT_NAME)
                     .separator("__")
@@ -176,21 +187,21 @@ impl From<&Settings> for LoggingConfig {
     }
 }
 
-#[derive(Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default)]
 pub(crate) struct CustomTheme {
     pub(crate) name: Box<str>,
     pub(crate) palette: CustomPalette,
     pub(crate) type_: ThemeType,
 }
 
-#[derive(Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default)]
 pub enum ThemeType {
     #[default]
     Dark,
     Shell,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct CustomPalette {
     pub name: Box<str>,
 
@@ -374,4 +385,26 @@ pub fn install_manpages() -> Result<()> {
 
         Ok(())
     }
+}
+
+/// Generate a default config file to the default location
+/// in TOML format
+pub fn init_config() -> Result<()> {
+    use std::fs;
+
+    println!("Generating default config file...");
+    let config_dir = get_config_dir().join("config");
+    if !config_dir.exists() {
+        fs::create_dir_all(&config_dir)?;
+        let config = Settings::new()?;
+        let toml = toml::to_string_pretty(&config)?;
+        fs::write(config_dir.join("default.toml"), toml)?;
+        println!(
+            "Config file generated at {}",
+            config_dir.join("default.toml").display()
+        );
+    } else {
+        println!("Config file already exists");
+    }
+    Ok(())
 }

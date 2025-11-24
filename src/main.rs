@@ -40,6 +40,10 @@ fn main() -> Result<()> {
 
             return crate::completions::install_completions(shell);
         }
+        Some(Commands::InitConfig) => {
+            config::init_config()?;
+            return Ok(());
+        }
         _ => {}
     }
 

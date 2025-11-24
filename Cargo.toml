@@ -18,7 +18,7 @@ chrono = "0.4.42"
 clap = { version = "4.5.51", features = ["cargo", "derive"] }
 clap_complete = "4.5.60"
 color-eyre = "0.6.5"
-config = "0.15.19"
+config = { version = "0.15.19", features = ["toml"] }
 crossbeam = { version = "0.8.4", features = ["crossbeam-deque"] }
 derive-getters = "0.5.0"
 directories = "6.0.0"
@@ -46,6 +46,10 @@ better-panic = "0.3.0"
 tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 tui-logger = { version = "0.17.4", features = ["tracing", "tracing-subscriber", "tracing-support"] }
+toml = { version = "0.9.8", default-features = false, features = ["display", "std", "serde", "fast_hash"] }
+json = "0.12.4"
+json5 = "0.4.1"
+glob = "0.3.3"
 
 [profile.release]
 codegen-units = 1 # Allows compiler to perform better optimization.
