@@ -67,6 +67,7 @@ use ratatui::widgets::Widget;
 use ratatui::widgets::block;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::FileType;
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::f64;
 use std::io::stdout;
@@ -194,11 +195,24 @@ impl MainUI {
         }
     }
 
-    pub fn get_file_entries(&self) -> &Vec<FileEntry> {
-        if self.filtered_file_entries.is_empty() {
+    #[inline]
+    pub fn get_file_entries(&self) -> Cow<'_, [FileEntry]> {
+        let entries = if self.filtered_file_entries.is_empty() {
             &self.current_file_entries
         } else {
             &self.filtered_file_entries
+        };
+
+        if self.hidden_files {
+            Cow::Owned(
+                entries
+                    .iter()
+                    .filter(|entry| !entry.name.starts_with('.'))
+                    .cloned()
+                    .collect(),
+            )
+        } else {
+            Cow::Borrowed(entries.as_slice())
         }
     }
 }
@@ -381,7 +395,8 @@ pub fn render(
     }
 
     if let Some(row) = state.table_state.selected() {
-        let file = state.get_file_entries().get(row);
+        let file = state.get_file_entries();
+        let file = file.get(row);
         if let Some(file) = file {
             if let Some(content) = &state.current_file_content
                 && state.detail_window_mode == DetailWindowMode::Content
@@ -467,7 +482,8 @@ pub fn render(
         );
     input.render(left_bottom, buf, &mut state.input_state);
 
-    let data = FileDataSlice(&state.get_file_entries().clone());
+    let files = state.get_file_entries().into_owned();
+    let data = FileDataSlice(&files.clone());
 
     let table_style = ctx.theme.table_style();
     let table = Table::<RowSelection>::default()
@@ -693,7 +709,8 @@ pub fn event(
                             let path = PathBuf::from(state.current_path.clone());
                             let selected = state.table_state.selected();
                             if let Some(selected) = selected {
-                                let Some(file) = state.get_file_entries().get(selected) else {
+                                let files = state.get_file_entries();
+                                let Some(file) = files.get(selected) else {
                                     return Ok(Control::Continue);
                                 };
                                 if file.is_dir() {
@@ -756,7 +773,8 @@ pub fn event(
                                 let path = path.canonicalize()?;
                                 let selected = state.table_state.selected();
                                 if let Some(selected) = selected {
-                                    let Some(file) = state.get_file_entries().get(selected) else {
+                                        let files = state.get_file_entries();
+                                    let Some(file) = files.get(selected) else {
                                         return Ok(Control::Continue);
                                     };
                                     let path = path.join(file.name());
